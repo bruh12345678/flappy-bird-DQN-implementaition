@@ -11,36 +11,41 @@ class DQN(nn.Module):
         super(DQN, self).__init__()
         self.fc1 = nn.Linear(state_size, 64)
         self.fc2 = nn.Linear(64, 128)
-        self.fc3 = nn.Linear(128, 256)
-        self.fc4 = nn.Linear(256, action_size)  # 2 actions: jump or not
+        self.fc3 = nn.Linear(128, action_size) # 2 actions: jump or not
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
-        x = torch.relu(self.fc3(x))
-        return self.fc4(x)
+        return self.fc3(x)
 
 class DQNAgent:
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=2000)  # Replay buffer
-        self.gamma = 0.95  # Discount factor
-        self.epsilon = 1  # Exploration rate
-        self.epsilon_min = 0.05  # Minimum exploration rate
-        self.epsilon_decay = 0.0001  # Decay factor for exploration
-        self.learning_rate = 0.1
-        self.batch_size = 1024
+        self.memory = deque(maxlen=5000)
+        self.gamma = 0.9
+        self.epsilon = 1
+        self.epsilon_min = 0.01
+        self.epsilon_decay = 0.0001
+        self.batch_size = 256
+        self.learning_rate = 0.001
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.model = DQN(state_size, action_size).to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=0.9)
         self.criterion = nn.MSELoss()
+
+        self.target_model = DQN(state_size, action_size).to(self.device)
+        self.target_model.load_state_dict(self.model.state_dict())
+        self.target_model.eval() 
+
+        self.train_step = 0
+        self.target_update_freq = 200
 
     def act(self, state):
         """Choose an action: Explore (random) or Exploit (model prediction)"""
         if np.random.rand() < self.epsilon:
-            return 1 if np.random.rand() < 0.07 else 0  # Random action
+            return 1 if np.random.rand() < 0.08 else 0  # Random action
         state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         q_values = self.model(state)
         return torch.argmax(q_values).item()  # Select action with highest Q-value
@@ -64,17 +69,22 @@ class DQNAgent:
         dones = torch.FloatTensor(dones).to(self.device)
 
         # Compute target Q-values using Bellman Equation
-        target_q_values = rewards + (1 - dones) * self.gamma * torch.max(self.model(next_states), dim=1)[0]
+        target_q_values = rewards + (1 - dones) * self.gamma * self.target_model(next_states).max(1)[0]
 
 
         # Compute predicted Q-values for taken actions
         q_values = self.model(states).gather(1, actions).squeeze()
 
         # Compute loss and backpropagate
-        loss = self.criterion(q_values, target_q_values.detach())
+        self.loss = self.criterion(q_values, target_q_values.detach())
         self.optimizer.zero_grad()
-        loss.backward()
+        self.loss.backward()
         self.optimizer.step()
+
+        print(self.loss)
+        self.train_step += 1
+        if self.train_step % self.target_update_freq == 0:
+            self.target_model.load_state_dict(self.model.state_dict())
 
         # Decay epsilon
         if self.epsilon > self.epsilon_min:
@@ -85,7 +95,8 @@ class DQNAgent:
         """Save model and memory."""
         data = {
             "model_state": self.model.state_dict(),
-            "memory": self.memory,
+            "target_model_state": self.target_model.state_dict(),  # Save target model too
+            "memory": list(self.memory),  # Convert deque to list
             "epsilon": self.epsilon,
         }
         torch.save(data, filename)
@@ -95,6 +106,7 @@ class DQNAgent:
         try:
             data = torch.load(filename)
             self.model.load_state_dict(data["model_state"])
+            self.target_model.load_state_dict(data["target_model_state"])
             self.memory = deque(data["memory"], maxlen=2000)  # Convert list back to deque
             self.epsilon = data["epsilon"]
             print(f"Loaded model from {filename}")

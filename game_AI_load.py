@@ -1,9 +1,6 @@
 import pygame
 import os
 import random
-from Agent import DQNAgent
-
-TRAIN_SPEED = 1
 
 BIRD_IMG = [
     pygame.image.load(os.path.join("imgs", "bird1.png")),
@@ -27,9 +24,7 @@ SCREEN_WIDTH = BG_IMG.get_width()
 SCREEN_HEIGHT = BG_IMG.get_height()
 
 BASE_IMG = pygame.image.load(os.path.join("imgs", "base.png"))
-BASE_IMG = pygame.transform.scale(
-    BASE_IMG, (SCREEN_WIDTH, BASE_IMG.get_height())
-).convert_alpha()
+BASE_IMG = pygame.transform.scale(BASE_IMG, (SCREEN_WIDTH, BASE_IMG.get_height()))
 
 base_width = BASE_IMG.get_width()
 base_height = BASE_IMG.get_height()
@@ -40,9 +35,9 @@ clock = pygame.time.Clock()
 
 
 class BIRD:
-    GRAVITY = 0.5 * TRAIN_SPEED
+    GRAVITY = 0.5
     JUMP_STRENGTH = -10
-    ROTATION_SPEED = 10 * TRAIN_SPEED
+    ROTATION_SPEED = 10
 
     def __init__(self, x=50, y=200):
         self.x = x
@@ -91,7 +86,7 @@ class PIPE:
     PIPE_IMG = pygame.image.load(os.path.join("imgs", "pipe.png"))
     PIPE_WIDTH = PIPE_IMG.get_width()
     PIPE_HEIGHT = PIPE_IMG.get_height()
-    PIPE_GAP = 175
+    PIPE_GAP = 100
     PIPE_RANGE = -150
 
     def __init__(self):
@@ -102,7 +97,7 @@ class PIPE:
         self.y_bottom = (
             self.y_top + self.PIPE_HEIGHT + self.PIPE_GAP
         )  # Bottom pipe is placed after the gap
-        self.vel = 5 * TRAIN_SPEED
+        self.vel = 5
         self.scored = False
 
     def move(self):
@@ -143,18 +138,20 @@ class PIPE:
 
 
 bird = BIRD()
-FRAMERATE = 60
-PIPE_SPAWN_TIME = 1200 / TRAIN_SPEED
+pipes = []
+
+PIPE_SPAWN_TIME = 1200  # milisecond
+last_spawn_time = pygame.time.get_ticks()
+
 score = 0
 
+stop = False
 # For display score
 pygame.font.init()
 score_font = pygame.font.SysFont("Comic Sans MS", 30)
 
-
 def draw_lines(win, bird_rect, pipe_gap_coordinate):
     """Draw red lines from the bird to the pipe gap corners"""
-
     bird_center = bird_rect.center  # Get the bird's center position
 
     pipe_gap_coordinate  # Get 4 corners
@@ -162,131 +159,79 @@ def draw_lines(win, bird_rect, pipe_gap_coordinate):
     for corner in pipe_gap_coordinate:
         pygame.draw.line(win, (255, 0, 0), bird_center, corner, 2)  # Draw red line
 
-
 running = True
-pipe_gap_coordinate = ((0, 0), (0, 0), (0, 0), (0, 0))
-pipes = []
-time_fly = 500
-state_size = 11  # (Bird position, velocity, pipe coordinates)
-action_size = 2  # (Jump, No Jump)
-agent = DQNAgent(state_size, action_size)
-reward = 0
-best_score = 0
-
-game_counts = 0
+pipe_gap_coordinate = ((0,0), (0,0), (0,0), (0,0))
 while running:
-
-    clock.tick(FRAMERATE * TRAIN_SPEED)
+    clock.tick(60)
 
     # Main event
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-    bird_rect = bird.get_rects()
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_SPACE:
+                for pipe in pipes:
+                    if not pipe.scored:
+                        pipe_gap_coordinate = pipes[0].get_pipe_gap()
+                    else:
+                        pipe_gap_coordinate = pipes[1].get_pipe_gap()
+                
+                if pipe_gap_coordinate != ((0,0), (0,0), (0,0), (0,0)):
+                    print(pipe_gap_coordinate, bird.x ,bird.y, bird.vel)
 
-    if not pipes:
-        pipes = [PIPE()]
-        last_spawn_time = pygame.time.get_ticks()
+                state = pipe_gap_coordinate, bird.x ,bird.y
+                bird.jump()
 
-    pipe_gap_coordinate = pipes[0].get_pipe_gap()
+    if not stop:
+        # Move bird
+        bird.move()
 
-    bird_state = [bird.x, bird.y, bird.vel]
-    pipe_state = [
-        pipe_gap_coordinate[0][0],
-        pipe_gap_coordinate[0][1],
-        pipe_gap_coordinate[1][0],
-        pipe_gap_coordinate[1][1],
-        pipe_gap_coordinate[2][0],
-        pipe_gap_coordinate[2][1],
-        pipe_gap_coordinate[3][0],
-        pipe_gap_coordinate[3][1],
-    ]
-    state = bird_state + pipe_state
-    action = agent.act(state)
-    if action == 1 and bird.y > 20:
-        bird.jump()
+        # Generate pipe
+        current_time = pygame.time.get_ticks()
+        if current_time - last_spawn_time > PIPE_SPAWN_TIME:
+            pipes.append(PIPE())
+            last_spawn_time = current_time
 
-    done = False
+        # Move pipes
+        for pipe in pipes:
+            pipe.move()
+            if pipe.off_screen():
+                pipes.remove(pipe)
 
-    # Move bird
-    bird.move()
+        # Calculate score
+        bird_rect = bird.get_rects()
+        for pipe in pipes:
+            top_rect, bottom_rect = pipe.get_rects()
 
-    # Generate pipe
-    current_time = pygame.time.get_ticks()
-    if current_time - last_spawn_time > PIPE_SPAWN_TIME:
-        pipes.append(PIPE())
-        last_spawn_time = current_time
+            # Add score
+            if bird_rect[0] > top_rect[0] and not pipe.scored:
+                score += 1
+                pipe.scored = True
 
-    # Move pipes
-    for pipe in pipes:
-        pipe.move()
+            # Game over condition
+            if bird_rect.colliderect(top_rect) or bird_rect.colliderect(bottom_rect):
+                stop = True
 
-    if current_time - time_fly >= 400 / TRAIN_SPEED:
-        reward += 5
-        time_fly = current_time
+        # Also gameover if it touch the ground
+        if bird.y + bird_rect[3] >= base_y:
+            stop = True
 
-    # Calculate score
-    bird_rect = bird.get_rects()
-    for pipe in pipes:
-        top_rect, bottom_rect = pipe.get_rects()
+        # Draw screen
+        win.blit(BG_IMG, (bg_x, bg_y))
+        for pipe in pipes:
+            pipe.draw(win)
+        win.blit(BASE_IMG, (base_x, base_y))
+        bird.draw(win=win)
+        score_surface = score_font.render(f"{score}", False, (0, 0, 0))
+        win.blit(score_surface, (0, 0))
 
-        # Add score
-        if bird_rect[0] > top_rect[0] and not pipe.scored:
-            score += 1
-            pipe.scored = True
-            reward += 30
-            pipes.remove(pipe)
+        # Draw line for gap
+        for pipe in pipes:
+            if not pipe.scored:
+                pipe_gap_coordinate = pipes[0].get_pipe_gap()
+                draw_lines(win, bird_rect, pipe_gap_coordinate)
+            else:
+                pipe_gap_coordinate = pipes[1].get_pipe_gap()
+                draw_lines(win, bird_rect, pipe_gap_coordinate)
 
-        # Game over condition
-        if bird_rect.colliderect(top_rect) or bird_rect.colliderect(bottom_rect):
-            reward -= -50
-            done = True
-
-    # Also gameover if it touch the ground
-    if bird.y + bird_rect[3] >= base_y:
-        reward -= -100  # Negative reward for hitting the ground
-        done = True
-
-    next_state = [bird.x, bird.y, bird.vel] + [
-        pipe_gap_coordinate[0][0],
-        pipe_gap_coordinate[0][1],
-        pipe_gap_coordinate[1][0],
-        pipe_gap_coordinate[1][1],
-        pipe_gap_coordinate[2][0],
-        pipe_gap_coordinate[2][1],
-        pipe_gap_coordinate[3][0],
-        pipe_gap_coordinate[3][1],
-    ]
-
-    agent.remember(state, action, reward, next_state, done)
-
-    agent.replay()
-
-    if done:
-        agent.save("bird_dqn.pth")
-        bird = BIRD()  # Restart game
-        pipes = [PIPE()]
-        last_spawn_time = pygame.time.get_ticks()
-        if score > best_score:
-            best_score = score
-            print(best_score, reward)
-
-        game_counts += 1
-        # if game_counts % 20 == 0:
-        #     print(agent.epsilon)
-
-        score = 0
-        reward = 0
-        agent.epsilon = max(agent.epsilon_min, agent.epsilon - agent.epsilon_decay)
-
-    # Draw screen
-    win.blit(BG_IMG, (bg_x, bg_y))
-    for pipe in pipes:
-        pipe.draw(win)
-    win.blit(BASE_IMG, (base_x, base_y))
-    bird.draw(win=win)
-    score_surface = score_font.render(f"{score}", False, (0, 0, 0))
-    win.blit(score_surface, (0, 0))
-
-    draw_lines(win, bird_rect, pipe_gap_coordinate)
-    pygame.display.flip()
+        pygame.display.flip()
