@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import time
 
 TRAIN_SPEED = 1
+TRAIN_SPEED = 1
 
 BIRD_IMG = [
     pygame.image.load(os.path.join("imgs", "bird1.png")),
@@ -28,8 +29,10 @@ bg_y = (SCREEN_HEIGHT - BG_IMG.get_height()) // 2
 SCREEN_WIDTH = BG_IMG.get_width()
 SCREEN_HEIGHT = BG_IMG.get_height()
 
-BASE_IMG = pygame.image.load(os.path.join("imgs", "base.png")).convert_alpha()
-BASE_IMG = pygame.transform.scale(BASE_IMG, (SCREEN_WIDTH, BASE_IMG.get_height()))
+BASE_IMG = pygame.image.load(os.path.join("imgs", "base.png"))
+BASE_IMG = pygame.transform.scale(
+    BASE_IMG, (SCREEN_WIDTH, BASE_IMG.get_height())
+).convert_alpha()
 
 base_width = BASE_IMG.get_width()
 base_height = BASE_IMG.get_height()
@@ -97,7 +100,7 @@ class PIPE:
     PIPE_IMG = pygame.image.load(os.path.join("imgs", "pipe.png"))
     PIPE_WIDTH = PIPE_IMG.get_width()
     PIPE_HEIGHT = PIPE_IMG.get_height()
-    PIPE_GAP = 150
+    PIPE_GAP = 175
     PIPE_RANGE = -150
 
     def __init__(self):
@@ -156,8 +159,10 @@ score = 0
 pygame.font.init()
 score_font = pygame.font.SysFont("Comic Sans MS", 30)
 
+
 def draw_lines(win, bird_rect, pipe_gap_coordinate):
     """Draw red lines from the bird to the pipe gap corners"""
+
     bird_center = bird_rect.center  # Get the bird's center position
 
     pipe_gap_coordinate  # Get 4 corners
@@ -165,9 +170,10 @@ def draw_lines(win, bird_rect, pipe_gap_coordinate):
     for corner in pipe_gap_coordinate:
         pygame.draw.line(win, (255, 0, 0), bird_center, corner, 2)  # Draw red line
 
-running = True
-pipe_gap_coordinate = ((0,0), (0,0), (0,0), (0,0))
 
+running = True
+pipe_gap_coordinate = ((0, 0), (0, 0), (0, 0), (0, 0))
+pipes = []
 time_fly = 500
 state_size = 11  # (Bird position, velocity, pipe coordinates)
 action_size = 2  # (Jump, No Jump)
@@ -216,7 +222,7 @@ def plot_training_progress(episodes, rewards, loss):
     plt.show()
 
 while running:
-    
+
     clock.tick(FRAMERATE * TRAIN_SPEED)
     
     # Main event
@@ -297,10 +303,14 @@ while running:
             bird.dead = True
 
     next_state = [bird.x, bird.y, bird.vel] + [
-        pipe_gap_coordinate[0][0], pipe_gap_coordinate[0][1],
-        pipe_gap_coordinate[1][0], pipe_gap_coordinate[1][1],
-        pipe_gap_coordinate[2][0], pipe_gap_coordinate[2][1],
-        pipe_gap_coordinate[3][0], pipe_gap_coordinate[3][1],
+        pipe_gap_coordinate[0][0],
+        pipe_gap_coordinate[0][1],
+        pipe_gap_coordinate[1][0],
+        pipe_gap_coordinate[1][1],
+        pipe_gap_coordinate[2][0],
+        pipe_gap_coordinate[2][1],
+        pipe_gap_coordinate[3][0],
+        pipe_gap_coordinate[3][1],
     ]
 
     for bird in birds:
@@ -355,6 +365,7 @@ while running:
     score_surface = score_font.render(f"{score}", False, (0, 0, 0))
     win.blit(score_surface, (0, 0))
 
+    draw_lines(win, bird_rect, pipe_gap_coordinate)
     pygame.display.flip()
 
 plot_training_progress(episodes, rewards, losses)
