@@ -2,8 +2,10 @@ import pygame
 import os
 import random
 from Agent import DQNAgent
+import matplotlib.pyplot as plt
+import time
 
-TRAIN_SPEED = 10
+TRAIN_SPEED = 1
 
 BIRD_IMG = [
     pygame.image.load(os.path.join("imgs", "bird1.png")),
@@ -48,6 +50,12 @@ class BIRD:
         self.rot = 0
         self.vel = 0
         self.current_img_tick = 0
+        self.alive = True
+        self.scored = False
+        self.memory = []
+        self.reward = 0
+        self.frame_reward = 0
+        self.dead = False
 
     def move(self):
         self.vel += self.GRAVITY
@@ -136,13 +144,10 @@ class PIPE:
             (self.x + self.PIPE_WIDTH, self.y_bottom),
         )
 
-    def off_screen(self):
-        return self.x + self.PIPE_WIDTH < 0
+    def off_screen(self, bird_x_pos):
+        return self.x + self.PIPE_WIDTH < bird_x_pos
 
 
-bird = BIRD()
-pipes = [PIPE()]
-last_spawn_time = pygame.time.get_ticks()
 FRAMERATE = 60
 PIPE_SPAWN_TIME = 1200 / TRAIN_SPEED
 score = 0
@@ -167,43 +172,83 @@ time_fly = 500
 state_size = 11  # (Bird position, velocity, pipe coordinates)
 action_size = 2  # (Jump, No Jump)
 agent = DQNAgent(state_size, action_size)
-reward = 0
+
+GEN = 700
+pipes = []
+birds = [BIRD() for _ in range (GEN)]
+bird_memory = []
+
+episode = 0
+done = False
+
+gen_decay = GEN
+
+episodes = []
+losses = []
+rewards = []
+
+import matplotlib.pyplot as plt 
+def plot_training_progress(episodes, rewards, loss):
+    """
+    Plots training progress with two subplots:
+    - Episode vs. Reward
+    - Episode vs. Loss
+    """
+    fig, ax1 = plt.subplots(2, 1, figsize=(10, 8))  # 2 subplots vertically
+
+    # Plot Rewards
+    ax1[0].plot(episodes, rewards, 'b-', label="Rewards")  # Blue line
+    ax1[0].set_xlabel("Episodes")
+    ax1[0].set_ylabel("Rewards")
+    ax1[0].set_title("Training Progress: Reward per Episode")
+    ax1[0].legend()
+    ax1[0].grid(True)
+
+    # Plot Loss
+    ax1[1].plot(episodes, loss, 'r-', label="Loss")  # Red line
+    ax1[1].set_xlabel("Episodes")
+    ax1[1].set_ylabel("Loss")
+    ax1[1].set_title("Training Progress: Loss per Episode")
+    ax1[1].legend()
+    ax1[1].grid(True)
+
+    plt.tight_layout()  # Adjust layout for better visibility
+    plt.show()
 
 while running:
     
     clock.tick(FRAMERATE * TRAIN_SPEED)
     
-
     # Main event
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-    bird_rect = bird.get_rects()
+
     if not pipes:
         pipes = [PIPE()]
-    pipe_gap_coordinate = pipes[0].get_pipe_gap()
-    draw_lines(win, bird_rect, pipe_gap_coordinate)
-    
-    bird_state = [bird.x, bird.y, bird.vel]
-    pipe_state = [
-        pipe_gap_coordinate[0][0], pipe_gap_coordinate[0][1],
-        pipe_gap_coordinate[1][0], pipe_gap_coordinate[1][1],
-        pipe_gap_coordinate[2][0], pipe_gap_coordinate[2][1],
-        pipe_gap_coordinate[3][0], pipe_gap_coordinate[3][1],
-    ]
-    state = bird_state + pipe_state
-    action = agent.act(state)
-    if action == 1 and bird.y > 20:
-        bird.jump()
-    
-    
-    done = False
+        last_spawn_time = pygame.time.get_ticks()
 
-    # Move bird
-    bird.move()
+    for bird in birds:
+        if bird.alive:
+            bird_rect = bird.get_rects()
 
+            pipe_gap_coordinate = pipes[0].get_pipe_gap()
+        
+            bird_state = [bird.x, bird.y, bird.vel]
+            pipe_state = [
+                pipe_gap_coordinate[0][0], pipe_gap_coordinate[0][1],
+                pipe_gap_coordinate[1][0], pipe_gap_coordinate[1][1],
+                pipe_gap_coordinate[2][0], pipe_gap_coordinate[2][1],
+                pipe_gap_coordinate[3][0], pipe_gap_coordinate[3][1],
+            ]
+            state = bird_state + pipe_state
+            action = agent.act(state)
+            if action == 1 and bird.y > 20:
+                bird.jump()
+
+            bird.move()
     
-    # Generate pipe
+
     current_time = pygame.time.get_ticks()
     if current_time - last_spawn_time > PIPE_SPAWN_TIME:
         pipes.append(PIPE())
@@ -211,34 +256,45 @@ while running:
 
     # Move pipes
     for pipe in pipes:
-        pipe.move()
-
-    if current_time - time_fly >= 1000 / TRAIN_SPEED:
-        reward += 20
-        time_fly = current_time
-
-    # Calculate score
-    bird_rect = bird.get_rects()
-    for pipe in pipes:
-        top_rect, bottom_rect = pipe.get_rects()
-
-
-        # Add score
-        if bird_rect[0] > top_rect[0] and not pipe.scored:
-            score += 1
-            pipe.scored = True
-            reward += 200
+        if pipe.off_screen(birds[0].x):
             pipes.remove(pipe)
+            for bird in birds:
+                bird.scored = False
+        pipe.move()
+    
+    for bird in birds:
+        bird.frame_reward = 0
+        if bird.alive:
+            bird.reward += 3
+            bird.frame_reward = 3
+        time_fly = current_time
+    # Calculate score
+    for bird in birds:
 
-        # Game over condition
-        if bird_rect.colliderect(top_rect) or bird_rect.colliderect(bottom_rect):
-            reward -= -500
-            done = True
+        bird_rect = bird.get_rects()
+        for pipe in pipes:
+            top_rect, bottom_rect = pipe.get_rects()
 
-    # Also gameover if it touch the ground
-    if bird.y + bird_rect[3] >= base_y:
-        reward -= -1000  # Negative reward for hitting the ground
-        done = True
+
+            # Add score
+            if bird_rect[0] > top_rect[0] and not bird.scored:
+                score += 1
+                bird.scored = True
+                bird.reward += 10
+                bird.frame_reward = 10
+                
+
+            # Game over condition
+            if bird_rect.colliderect(top_rect) or bird_rect.colliderect(bottom_rect):
+                bird.reward += -50
+                bird.frame_reward = -50
+                bird.dead = True
+
+        # Also gameover if it touch the ground
+        if bird.y + bird_rect[3] >= base_y:
+            bird.reward += -100  # Negative reward for hitting the ground
+            bird.frame_reward = -100
+            bird.dead = True
 
     next_state = [bird.x, bird.y, bird.vel] + [
         pipe_gap_coordinate[0][0], pipe_gap_coordinate[0][1],
@@ -247,18 +303,45 @@ while running:
         pipe_gap_coordinate[3][0], pipe_gap_coordinate[3][1],
     ]
 
-    agent.remember(state, action, reward, next_state, done)
+    for bird in birds:
+        bird.memory.append([state, action, bird.frame_reward, next_state, bird.alive])
+        if bird.dead:
+            bird.alive = False
 
-    agent.replay()
-
+    done = all(not bird.alive for bird in birds)
+    
     if done:
-        agent.save("bird_dqn.pth")
-        bird = BIRD()  # Restart game
-        pipes = [PIPE()]
+        best_reward = -1000
+        for bird in birds:
+            if best_reward < bird.reward:
+                best_reward = bird.reward
+                best_bird = bird
+
+        print(best_reward)
+        for memory in best_bird.memory:
+            if memory[4]:
+                agent.remember(memory[0], memory[1], memory[2], memory[3], memory[4])
+
+        episodes.append(episode)
+        rewards.append(best_reward)
+        
+        episode += 1
+
+        agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
+        loss = agent.replay(episode=episode)
+
+        losses.append(loss)
+
+        agent.save("bird_normal_speed_dqn.pth")
+        if gen_decay - 2 > 100:
+            gen_decay -= 2
+        
+        birds = [BIRD() for _ in range (gen_decay)]
+        pipes = []
         last_spawn_time = pygame.time.get_ticks()
+        agent.load("bird_normal_speed_dqn.pth")
         score = 0
-        reward = 0
-        agent.epsilon = max(agent.epsilon_min, agent.epsilon - agent.epsilon_decay)  # Decay epsilon
+        done = False
 
 
     # Draw screen
@@ -266,8 +349,12 @@ while running:
     for pipe in pipes:
         pipe.draw(win)
     win.blit(BASE_IMG, (base_x, base_y))
-    bird.draw(win=win)
+    for bird in birds:
+        if bird.alive:
+            bird.draw(win=win)
     score_surface = score_font.render(f"{score}", False, (0, 0, 0))
     win.blit(score_surface, (0, 0))
 
     pygame.display.flip()
+
+plot_training_progress(episodes, rewards, losses)

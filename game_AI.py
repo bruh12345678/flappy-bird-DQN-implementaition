@@ -1,6 +1,10 @@
 import pygame
 import os
 import random
+from Agent import DQNAgent
+
+
+GAME_SPEED = 2
 
 BIRD_IMG = [
     pygame.image.load(os.path.join("imgs", "bird1.png")),
@@ -35,9 +39,9 @@ clock = pygame.time.Clock()
 
 
 class BIRD:
-    GRAVITY = 0.5
+    GRAVITY = 0.5 * GAME_SPEED
     JUMP_STRENGTH = -10
-    ROTATION_SPEED = 10
+    ROTATION_SPEED = 10 * GAME_SPEED
 
     def __init__(self, x=50, y=200):
         self.x = x
@@ -48,7 +52,7 @@ class BIRD:
 
     def move(self):
         self.vel += self.GRAVITY
-        self.y += self.vel
+        self.y += self.vel 
 
         if self.vel < 0:
             self.rot = max(
@@ -86,7 +90,7 @@ class PIPE:
     PIPE_IMG = pygame.image.load(os.path.join("imgs", "pipe.png"))
     PIPE_WIDTH = PIPE_IMG.get_width()
     PIPE_HEIGHT = PIPE_IMG.get_height()
-    PIPE_GAP = 100
+    PIPE_GAP = 150
     PIPE_RANGE = -150
 
     def __init__(self):
@@ -97,7 +101,7 @@ class PIPE:
         self.y_bottom = (
             self.y_top + self.PIPE_HEIGHT + self.PIPE_GAP
         )  # Bottom pipe is placed after the gap
-        self.vel = 5
+        self.vel = 5 * GAME_SPEED
         self.scored = False
 
     def move(self):
@@ -140,7 +144,7 @@ class PIPE:
 bird = BIRD()
 pipes = []
 
-PIPE_SPAWN_TIME = 1200  # milisecond
+PIPE_SPAWN_TIME = 1200 / GAME_SPEED # milisecond
 last_spawn_time = pygame.time.get_ticks()
 
 score = 0
@@ -161,77 +165,87 @@ def draw_lines(win, bird_rect, pipe_gap_coordinate):
 
 running = True
 pipe_gap_coordinate = ((0,0), (0,0), (0,0), (0,0))
+state_size = 11  # (Bird position, velocity, pipe coordinates)
+action_size = 2  # (Jump, No Jump)
+agent = DQNAgent(state_size, action_size)
+
+agent.load("bird_dqn.pth")
+
+reset = False
 while running:
-    clock.tick(60)
+    clock.tick(60 * GAME_SPEED)
 
     # Main event
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_SPACE:
-                for pipe in pipes:
-                    if not pipe.scored:
-                        pipe_gap_coordinate = pipes[0].get_pipe_gap()
-                    else:
-                        pipe_gap_coordinate = pipes[1].get_pipe_gap()
-                
-                if pipe_gap_coordinate != ((0,0), (0,0), (0,0), (0,0)):
-                    print(pipe_gap_coordinate, bird.x ,bird.y, bird.vel)
-
-                state = pipe_gap_coordinate, bird.x ,bird.y
-                bird.jump()
-
-    if not stop:
-        # Move bird
-        bird.move()
-
-        # Generate pipe
-        current_time = pygame.time.get_ticks()
-        if current_time - last_spawn_time > PIPE_SPAWN_TIME:
-            pipes.append(PIPE())
-            last_spawn_time = current_time
-
-        # Move pipes
-        for pipe in pipes:
-            pipe.move()
-            if pipe.off_screen():
-                pipes.remove(pipe)
-
-        # Calculate score
         bird_rect = bird.get_rects()
-        for pipe in pipes:
-            top_rect, bottom_rect = pipe.get_rects()
 
-            # Add score
-            if bird_rect[0] > top_rect[0] and not pipe.scored:
-                score += 1
-                pipe.scored = True
+    if not pipes:
+        pipes = [PIPE()]
+        last_spawn_time = pygame.time.get_ticks()
 
-            # Game over condition
-            if bird_rect.colliderect(top_rect) or bird_rect.colliderect(bottom_rect):
-                stop = True
+    pipe_gap_coordinate = pipes[0].get_pipe_gap()
+    draw_lines(win, bird_rect, pipe_gap_coordinate)
+    bird_state = [bird.x, bird.y, bird.vel]
+    pipe_state = [
+        pipe_gap_coordinate[0][0], pipe_gap_coordinate[0][1],
+        pipe_gap_coordinate[1][0], pipe_gap_coordinate[1][1],
+        pipe_gap_coordinate[2][0], pipe_gap_coordinate[2][1],
+        pipe_gap_coordinate[3][0], pipe_gap_coordinate[3][1],
+    ]
+    state = bird_state + pipe_state
+    action = agent.act(state)
+    if action == 1 and bird.y > 20:
+        bird.jump()
 
-        # Also gameover if it touch the ground
-        if bird.y + bird_rect[3] >= base_y:
-            stop = True
+    bird.move()
 
-        # Draw screen
-        win.blit(BG_IMG, (bg_x, bg_y))
-        for pipe in pipes:
-            pipe.draw(win)
-        win.blit(BASE_IMG, (base_x, base_y))
-        bird.draw(win=win)
-        score_surface = score_font.render(f"{score}", False, (0, 0, 0))
-        win.blit(score_surface, (0, 0))
+    # Generate pipe
+    current_time = pygame.time.get_ticks()
+    if current_time - last_spawn_time > PIPE_SPAWN_TIME:
+        pipes.append(PIPE())
+        last_spawn_time = current_time
 
-        # Draw line for gap
-        for pipe in pipes:
-            if not pipe.scored:
-                pipe_gap_coordinate = pipes[0].get_pipe_gap()
-                draw_lines(win, bird_rect, pipe_gap_coordinate)
-            else:
-                pipe_gap_coordinate = pipes[1].get_pipe_gap()
-                draw_lines(win, bird_rect, pipe_gap_coordinate)
+    # Move pipes
+    for pipe in pipes:
+        pipe.move()
+        if pipe.off_screen():
+            pipes.remove(pipe)
 
-        pygame.display.flip()
+    # Calculate score
+    bird_rect = bird.get_rects()
+    for pipe in pipes:
+        top_rect, bottom_rect = pipe.get_rects()
+
+        # Add score
+        if bird_rect[0] > top_rect[0] and not pipe.scored:
+            score += 1
+            pipe.scored = True
+
+        # Game over condition
+        if bird_rect.colliderect(top_rect) or bird_rect.colliderect(bottom_rect):
+            reset = True
+
+    # Also gameover if it touch the ground
+    if bird.y + bird_rect[3] >= base_y:
+        reset = True
+
+    if reset:
+        score = 0
+        pipes = []
+        bird = BIRD()
+        reset = False
+
+    # Draw screen
+    win.blit(BG_IMG, (bg_x, bg_y))
+    for pipe in pipes:
+        pipe.draw(win)
+    win.blit(BASE_IMG, (base_x, base_y))
+    bird.draw(win=win)
+    score_surface = score_font.render(f"{score}", False, (0, 0, 0))
+    win.blit(score_surface, (0, 0))
+    draw_lines(win, bird_rect, pipe_gap_coordinate)
+    
+
+    pygame.display.flip()
